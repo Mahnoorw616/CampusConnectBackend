@@ -8,24 +8,28 @@ exports.getUserNotifications = async (req, res) => {
     try {
         const userId = req.user._id || req.user.id;
 
-        // Fetch the 30 latest notifications, populating sender details
         const notifications = await Notification.find({ recipient: userId })
-            .populate('sender', 'name username avatar')
+            .populate('sender', 'name avatar')
             .sort({ createdAt: -1 })
-            .limit(30);
+            .limit(30)
+            .lean();
 
         const unreadCount = await Notification.countDocuments({
             recipient: userId,
             isRead: false,
         });
 
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             unreadCount,
             notifications,
         });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Could not load notifications:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Could not load notifications'
+        });
     }
 };
 
@@ -50,9 +54,13 @@ exports.markAsRead = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Notification not found' });
         }
 
-        res.status(200).json({ success: true, notification });
+        return res.status(200).json({ success: true, notification });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Could not mark notification as read:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Could not mark notification as read'
+        });
     }
 };
 
@@ -68,8 +76,12 @@ exports.markAllAsRead = async (req, res) => {
             { $set: { isRead: true } }
         );
 
-        res.status(200).json({ success: true, message: 'All marked as read' });
+        return res.status(200).json({ success: true, message: 'All marked as read' });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Could not mark all notifications as read:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Could not mark all notifications as read'
+        });
     }
 };

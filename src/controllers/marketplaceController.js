@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 const Marketplace = require('../models/Marketplace');
+const User = require('../models/User');
+const Notification = require('../models/Notifications');
 const { UNIVERSITY_OPTIONS } = require('../constants/universities');
 const {
     normalizeMediaValue,
@@ -67,10 +69,40 @@ const serializeListing = (listing, viewerId) => {
     return returnedListing;
 };
 
+const notifyUniversityStudents = async ({ university, sellerId, listingId, title, sellerName }) => {
+    try {
+        const recipients = await User.find({
+            university,
+            _id: { $ne: sellerId }
+        }).select('_id').lean();
+
+        if (!recipients.length) return;
+
+        await Notification.insertMany(
+            recipients.map((recipient) => ({
+                recipient: recipient._id,
+                sender: sellerId,
+                type: 'MARKETPLACE',
+                message: `${sellerName} listed a new study resource: ${title}`,
+                marketplace: listingId
+            })),
+            { ordered: false }
+        );
+    } catch (error) {
+        console.error('Could not create marketplace notifications:', error);
+    }
+};
+
 const getListings = async (req, res, next) => {
     try {
         const university = req.query.uni
             ? String(req.query.uni).trim()
+            : '';
+        const type = req.query.type
+            ? String(req.query.type).trim()
+            : 'all';
+        const search = req.query.q
+            ? String(req.query.q).trim()
             : '';
 
         const filter = {};
@@ -85,6 +117,26 @@ const getListings = async (req, res, next) => {
             }
 
             filter.universityTag = university;
+        }
+
+        if (!['all', 'free', 'paid'].includes(type)) {
+            return res.status(400).json({
+                success: false,
+                message: 'type must be one of: all, free, paid'
+            });
+        }
+
+        if (type === 'free') filter.pricePKR = 0;
+        if (type === 'paid') filter.pricePKR = { $gt: 0 };
+
+        if (search) {
+            const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const searchPattern = new RegExp(escapedSearch, 'i');
+            filter.$or = [
+                { title: searchPattern },
+                { courseName: searchPattern },
+                { courseCode: searchPattern }
+            ];
         }
 
         const [listings, total] = await Promise.all([
@@ -198,6 +250,14 @@ const createListing = async (req, res, next) => {
         const populatedListing = await populateListing(
             Marketplace.findById(listing._id)
         );
+
+        await notifyUniversityStudents({
+            university: normalizedUniversity,
+            sellerId: req.user._id,
+            listingId: listing._id,
+            title: listing.title,
+            sellerName: req.user.name
+        });
 
         return res.status(201).json({
             success: true,

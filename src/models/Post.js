@@ -95,6 +95,11 @@ const postSchema = new mongoose.Schema({
     default: '',
     maxlength: [2000, 'Media URL cannot exceed 2000 characters']
   },
+  mediaType: {
+    type: String,
+    enum: ['', 'image', 'video'],
+    default: ''
+  },
   reactions: {
     Relatable: { type: Number, default: 0, min: 0 },
     Helpful: { type: Number, default: 0, min: 0 },

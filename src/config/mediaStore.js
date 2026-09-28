@@ -3,7 +3,7 @@ const { GridFSBucket, ObjectId } = require('mongodb');
 
 const MAX_POST_MEDIA_BYTES = 15 * 1024 * 1024;
 const MAX_MARKETPLACE_IMAGE_BYTES = 10 * 1024 * 1024;
-const DATA_URL_PATTERN = /^data:([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\r\n]+)$/;
+const DATA_URL_PATTERN = /^data:([^;,]+);base64,([\s\S]*)$/i;
 
 let mediaBucket;
 
@@ -25,8 +25,13 @@ const parseDataUrl = (value) => {
     const match = DATA_URL_PATTERN.exec(String(value));
     if (!match) return null;
 
-    const contentType = match[1].toLowerCase();
+    const contentType = match[1].trim().toLowerCase();
     const base64 = match[2].replace(/\s/g, '');
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
+        const error = new Error('The uploaded media has an invalid Base64 payload');
+        error.statusCode = 400;
+        throw error;
+    }
     const buffer = Buffer.from(base64, 'base64');
 
     if (!buffer.length) {

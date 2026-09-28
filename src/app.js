@@ -11,7 +11,10 @@ const { notFound, errorHandler } = require('./middleware/errorMiddleware');
 const app = express();
 
 const configuredOrigins = process.env.CLIENT_ORIGIN
-    ? process.env.CLIENT_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)
+    ? process.env.CLIENT_ORIGIN
+        .split(',')
+        .map((origin) => origin.trim().replace(/\/+$/, ''))
+        .filter(Boolean)
     : [];
 
 const defaultOrigins = [
@@ -58,7 +61,10 @@ app.use(
     })
 );
 
-app.use(express.json({ limit: '30mb' }));
+// Base64 media increases the request size by roughly one third. The frontend
+// limits uploaded post media to 15 MB, so leave enough room for the encoded
+// payload and JSON envelope.
+app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 app.get('/api/health', (_req, res) => {

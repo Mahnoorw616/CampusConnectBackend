@@ -14,6 +14,14 @@ const EMPTY_REACTIONS = { Relatable: 0, Helpful: 0, Support: 0, Vibe: 0 };
 const httpError = (statusCode, message) => Object.assign(new Error(message), { statusCode });
 const getOrigin = (req) => (process.env.PUBLIC_API_ORIGIN || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
 const mediaIdFromUrl = (url) => String(url || '').match(/\/api\/media\/([a-f0-9]{24})$/i)?.[1] || '';
+const mediaTypeFromValue = (value) => {
+  const normalized = String(value || '').toLowerCase();
+  if (normalized.startsWith('data:video/')) return 'video';
+  if (normalized.startsWith('data:image/')) return 'image';
+  if (/\.(mp4|webm|mov|m4v|ogg)(?:[?#].*)?$/i.test(normalized)) return 'video';
+  if (/\.(png|jpe?g|gif|webp|bmp|avif)(?:[?#].*)?$/i.test(normalized)) return 'image';
+  return '';
+};
 
 const pagination = (query) => {
   const pageValue = Number.parseInt(query.page, 10);
@@ -118,9 +126,40 @@ const createPost = async (req, res, next) => {
     if (!title || !content || !universityTag) return res.status(400).json({ success: false, message: 'title, content, and universityTag are required' });
     const fields = validatePostFields({ title, content, category, universityTag });
     if (fields.error) return res.status(400).json({ success: false, message: fields.error });
-    const storedMediaUrl = await normalizeMediaValue({ value: mediaUrl, kind: 'post', requestOrigin: getOrigin(req) });
-    const post = await Post.create({ title: fields.normalizedTitle, content: fields.normalizedContent, universityTag: fields.normalizedUniversity, category: fields.normalizedCategory || 'General', mediaUrl: storedMediaUrl, reactions: { ...EMPTY_REACTIONS }, authorId: req.user._id });
-    return res.status(201).json({ success: true, message: 'Post created successfully', post: await serializeOne(await populatePost(Post.findById(post._id)), req.user._id) });
+    let storedMediaUrl = '';
+    try {
+      storedMediaUrl = await normalizeMediaValue({
+        value: mediaUrl,
+        kind: 'post',
+        requestOrigin: getOrigin(req)
+      });
+      const post = await Post.create({
+        title: fields.normalizedTitle,
+        content: fields.normalizedContent,
+        universityTag: fields.normalizedUniversity,
+        category: fields.normalizedCategory || 'General',
+        mediaUrl: storedMediaUrl,
+        mediaType: mediaTypeFromValue(mediaUrl) || mediaTypeFromValue(storedMediaUrl),
+        reactions: { ...EMPTY_REACTIONS },
+        authorId: req.user._id
+      });
+      return res.status(201).json({
+        success: true,
+        message: 'Post created successfully',
+        post: await serializeOne(
+          await populatePost(Post.findById(post._id)),
+          req.user._id
+        )
+      });
+    } catch (error) {
+      const uploadedMediaId = mediaIdFromUrl(storedMediaUrl);
+      if (uploadedMediaId) {
+        await deleteMediaById(uploadedMediaId).catch((cleanupError) => {
+          console.error('Could not clean up failed post media upload:', cleanupError);
+        });
+      }
+      throw error;
+    }
   } catch (error) { return next(error); }
 };
 
@@ -137,7 +176,10 @@ const updatePost = async (req, res, next) => {
     if (fields.normalizedContent !== undefined) post.content = fields.normalizedContent;
     if (fields.normalizedCategory !== undefined) post.category = fields.normalizedCategory;
     if (fields.normalizedUniversity !== undefined) post.universityTag = fields.normalizedUniversity;
-    if (Object.prototype.hasOwnProperty.call(req.body, 'mediaUrl')) post.mediaUrl = await normalizeMediaValue({ value: req.body.mediaUrl, kind: 'post', requestOrigin: getOrigin(req) });
+    if (Object.prototype.hasOwnProperty.call(req.body, 'mediaUrl')) {
+      post.mediaUrl = await normalizeMediaValue({ value: req.body.mediaUrl, kind: 'post', requestOrigin: getOrigin(req) });
+      post.mediaType = mediaTypeFromValue(req.body.mediaUrl);
+    }
     await post.save();
     const newMediaId = mediaIdFromUrl(post.mediaUrl);
     if (oldMediaId && oldMediaId !== newMediaId) await deleteMediaById(oldMediaId);
@@ -264,6 +306,7 @@ const toggleReaction = async (req, res, next) => {
   const session = await mongoose.startSession();
   try {
     let result;
+    let notification;
     await session.withTransaction(async () => {
       const post = await Post.findById(req.params.id).session(session);
       if (!post) throw httpError(404, 'Post not found');
@@ -291,18 +334,25 @@ const toggleReaction = async (req, res, next) => {
         !existing &&
         post.authorId.toString() !== req.user._id.toString()
       ) {
-        try {
-          await Notification.create([{
-            recipient: post.authorId,
-            sender: req.user._id,
-            type: 'LIKE',
-            message: `${req.user.name || 'Someone'} reacted to your discussion: ${post.title}`,
-            post: post._id
-          }], { session });
-        } catch (_err) { /* ignore notification failure */ }
+        notification = {
+          recipient: post.authorId,
+          sender: req.user._id,
+          type: 'LIKE',
+          message: `${req.user.name || 'Someone'} reacted to your discussion: ${post.title}`,
+          post: post._id
+        };
       }
       result = { reactions: post.reactions.toObject ? post.reactions.toObject() : post.reactions, userReaction };
     });
+    if (notification) {
+      await notify(
+        notification.recipient,
+        notification.sender,
+        notification.type,
+        notification.message,
+        notification.post
+      );
+    }
     return res.json({ success: true, ...result });
   } catch (error) { return next(error); } finally { await session.endSession(); }
 };
