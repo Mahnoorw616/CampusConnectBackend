@@ -76,20 +76,24 @@ const notifyUniversityStudents = async ({ university, sellerId, listingId, title
             _id: { $ne: sellerId }
         }).select('_id').lean();
 
-        if (!recipients.length) return;
+        if (!recipients.length) return 0;
 
-        await Notification.insertMany(
-            recipients.map((recipient) => ({
-                recipient: recipient._id,
-                sender: sellerId,
-                type: 'MARKETPLACE',
-                message: `${sellerName} listed a new study resource: ${title}`,
-                marketplace: listingId
-            })),
-            { ordered: false }
+        const notificationDocuments = recipients.map((recipient) => ({
+            recipient: recipient._id,
+            sender: sellerId,
+            type: 'MARKETPLACE',
+            message: `${sellerName || 'A student'} listed a new study resource: ${title}`,
+            marketplace: listingId
+        }));
+
+        const createdNotifications = await Notification.insertMany(
+            notificationDocuments,
+            { ordered: true }
         );
+        return createdNotifications.length;
     } catch (error) {
         console.error('Could not create marketplace notifications:', error);
+        return 0;
     }
 };
 
@@ -251,7 +255,7 @@ const createListing = async (req, res, next) => {
             Marketplace.findById(listing._id)
         );
 
-        await notifyUniversityStudents({
+        const notifiedCount = await notifyUniversityStudents({
             university: normalizedUniversity,
             sellerId: req.user._id,
             listingId: listing._id,
@@ -262,6 +266,7 @@ const createListing = async (req, res, next) => {
         return res.status(201).json({
             success: true,
             message: 'Marketplace listing created successfully',
+            notifiedCount,
             listing: serializeListing(
                 await populatedListing,
                 req.user._id

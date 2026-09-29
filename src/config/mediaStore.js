@@ -3,6 +3,7 @@ const { GridFSBucket, ObjectId } = require('mongodb');
 
 const MAX_POST_MEDIA_BYTES = 15 * 1024 * 1024;
 const MAX_MARKETPLACE_IMAGE_BYTES = 10 * 1024 * 1024;
+const MEDIA_CHUNK_BYTES = 2 * 1024 * 1024;
 const DATA_URL_PATTERN = /^data:([^;,]+);base64,([\s\S]*)$/i;
 
 let mediaBucket;
@@ -57,6 +58,28 @@ const uploadBuffer = ({ buffer, contentType, filename }) => {
         stream.end(buffer);
     });
 };
+
+const uploadChunksToGridFS = async ({ chunks, contentType, filename, metadata = {} }) => {
+    const bucket = getMediaBucket();
+    const fileId = await new Promise((resolve, reject) => {
+        const stream = bucket.openUploadStream(filename, {
+            contentType,
+            metadata: { source: 'campusconnect', ...metadata }
+        });
+        stream.once('error', reject);
+        stream.once('finish', () => resolve(stream.id.toString()));
+
+        for (const chunk of chunks) {
+            stream.write(chunk);
+        }
+        stream.end();
+    });
+
+    return fileId;
+};
+
+const publicMediaUrl = ({ requestOrigin, mediaId }) =>
+    `${requestOrigin.replace(/\/+$/, '')}/api/media/${mediaId}`;
 
 const deleteMediaById = async (id) => {
     if (!id || !ObjectId.isValid(id)) return;
@@ -113,13 +136,16 @@ const normalizeMediaValue = async ({ value, kind, requestOrigin }) => {
         filename: `${kind}-${Date.now()}.${extension}`
     });
 
-    return `${requestOrigin.replace(/\/+$/, '')}/api/media/${fileId}`;
+    return publicMediaUrl({ requestOrigin, mediaId: fileId });
 };
 
 module.exports = {
     MAX_POST_MEDIA_BYTES,
     MAX_MARKETPLACE_IMAGE_BYTES,
+    MEDIA_CHUNK_BYTES,
     getMediaBucket,
+    publicMediaUrl,
+    uploadChunksToGridFS,
     normalizeMediaValue,
     deleteMediaById
 };

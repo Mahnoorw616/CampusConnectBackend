@@ -10,6 +10,8 @@ exports.getUserNotifications = async (req, res) => {
 
         const notifications = await Notification.find({ recipient: userId })
             .populate('sender', 'name avatar')
+            .populate('post', '_id')
+            .populate('marketplace', '_id')
             .sort({ createdAt: -1 })
             .limit(30)
             .lean();

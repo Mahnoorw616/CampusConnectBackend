@@ -122,8 +122,11 @@ const getPosts = async (req, res, next) => {
 
 const createPost = async (req, res, next) => {
   try {
-    const { title, content, universityTag, category, mediaUrl } = req.body;
+    const { title, content, universityTag, category, mediaUrl, mediaType } = req.body;
     if (!title || !content || !universityTag) return res.status(400).json({ success: false, message: 'title, content, and universityTag are required' });
+    if (mediaType !== undefined && mediaType !== '' && !['image', 'video'].includes(mediaType)) {
+      return res.status(400).json({ success: false, message: 'mediaType must be image or video' });
+    }
     const fields = validatePostFields({ title, content, category, universityTag });
     if (fields.error) return res.status(400).json({ success: false, message: fields.error });
     let storedMediaUrl = '';
@@ -139,7 +142,7 @@ const createPost = async (req, res, next) => {
         universityTag: fields.normalizedUniversity,
         category: fields.normalizedCategory || 'General',
         mediaUrl: storedMediaUrl,
-        mediaType: mediaTypeFromValue(mediaUrl) || mediaTypeFromValue(storedMediaUrl),
+        mediaType: mediaType || mediaTypeFromValue(mediaUrl) || mediaTypeFromValue(storedMediaUrl),
         reactions: { ...EMPTY_REACTIONS },
         authorId: req.user._id
       });
